@@ -38,9 +38,10 @@ class UnifiedBottleDetection:
         self.confidence_segmentation = 0.3
         self.iou = 0.5
         self.transpose_image = True  # Transpose activé par défaut
-        self.img_size = 320  # Taille très réduite pour inférence plus rapide
-        self.process_every_n_frames = 2  # Traiter 1 frame sur 2 pour chaque modèle
+        self.img_size = 640  # Taille augmentée pour meilleure précision avec GPU
+        self.process_every_n_frames = 1  # Traiter toutes les frames avec GPU
         self.frame_skip_counter = 0
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'  # Device GPU
         
         # === STATISTIQUES ===
         self.fps = 0
@@ -105,9 +106,17 @@ class UnifiedBottleDetection:
         else:
             print(f"❌ Modèle segmentation introuvable: {self.model_segmentation_path}")
         
-        # Vérifier GPU
+        # Vérifier et configurer GPU
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"🔧 Device: {device}")
+        
+        # Forcer les modèles à utiliser le GPU
+        if self.model_detection is not None:
+            self.model_detection.to(device)
+            print(f"✅ Modèle Détection sur {device}")
+        if self.model_segmentation is not None:
+            self.model_segmentation.to(device)
+            print(f"✅ Modèle Segmentation sur {device}")
         
         if self.model_detection is None or self.model_segmentation is None:
             print("\n⚠️ ATTENTION: Au moins un modèle n'a pas pu être chargé!")
@@ -149,7 +158,7 @@ class UnifiedBottleDetection:
             processed_frame = np.transpose(processed_frame, (1, 0, 2))
             processed_frame = np.ascontiguousarray(processed_frame)
         
-        # Inférence avec TRACKING
+        # Inférence avec TRACKING sur GPU
         results = self.model_detection.track(processed_frame, 
                                              conf=self.confidence_detection, 
                                              iou=self.iou,
@@ -157,7 +166,8 @@ class UnifiedBottleDetection:
                                              tracker="bytetrack.yaml",
                                              verbose=False,
                                              imgsz=self.img_size,
-                                             half=False)
+                                             device=self.device,
+                                             half=True if self.device == 'cuda' else False)
         
         # Dessiner les bounding boxes avec tracking
         annotated = processed_frame.copy()
@@ -266,7 +276,7 @@ class UnifiedBottleDetection:
         if self.model_segmentation is None:
             return frame, 0, 0.0, None
         
-        # Inférence avec TRACKING
+        # Inférence avec TRACKING sur GPU
         results = self.model_segmentation.track(frame, 
                                                conf=self.confidence_segmentation, 
                                                iou=self.iou,
@@ -274,7 +284,8 @@ class UnifiedBottleDetection:
                                                tracker="bytetrack.yaml",
                                                verbose=False,
                                                imgsz=self.img_size,
-                                               half=False)
+                                               device=self.device,
+                                               half=True if self.device == 'cuda' else False)
         
         annotated = frame.copy()
         num_objects = 0
@@ -693,9 +704,9 @@ class UnifiedBottleDetection:
         print("\n🎥 Démarrage du mode WEBCAM...")
         print("🔍 Recherche de la webcam...")
         
-        # Essayer plusieurs indices de caméra
+        # Essayer plusieurs indices de caméra (commence par index 1 pour la 2ème caméra)
         cap = None
-        for camera_index in [0, 1, 2]:
+        for camera_index in [1, 0, 2]:
             print(f"   Essai caméra index {camera_index}...")
             cap = cv2.VideoCapture(camera_index)
             if cap.isOpened():
@@ -708,19 +719,23 @@ class UnifiedBottleDetection:
             print("💡 Vérifiez que votre caméra n'est pas utilisée par une autre application")
             return
         
-        # Configuration webcam
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+        # Configuration webcam haute résolution
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, 30)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        print("✅ Webcam configurée (640x480)")
+        # Vérifier la résolution réelle obtenue
+        actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(f"✅ Webcam configurée ({actual_width}x{actual_height})")
+        print(f"🚀 GPU activé: {self.device == 'cuda'}")
         print("\n🚀 Lancement de l'interface unifiée...")
         print("📺 Les deux modèles s'afficheront côte à côte")
         
         window_name = 'Unified Bottle Detection - Dual Model'
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1400, 600)
+        cv2.resizeWindow(window_name, 1920, 1080)
         
         # Ajouter le callback pour les clics de souris
         cv2.setMouseCallback(window_name, self.mouse_callback)
